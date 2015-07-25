@@ -1,8 +1,11 @@
 #ifndef HIDRAW_TOUCH_PLUGIN_H
 #define HIDRAW_TOUCH_PLUGIN_H
 
+#include <QtCore/QMap>
 #include <QtGui/QGenericPlugin>
 #include <qpa/qwindowsysteminterface.h>
+
+class UdevHelper;
 
 class HidRawTouchPlugin : public QGenericPlugin
 {
@@ -21,10 +24,17 @@ class HidRawHandler : public QObject
 public:
     HidRawHandler(const QString &spec);
 
-private:
-    void processRawPacket(const QByteArray &data);
+private slots:
+    void onDeviceDetected(const QString &node, const QString &vid, const QString &pid);
+    void onDeviceRemoved(const QString &node);
+    void onSocketActivated(int socket);
 
+private:
+    void addDevice(const QString &node);
+
+    UdevHelper *m_udev;
     QTouchDevice *m_device;
+    QFile *m_file;
 };
 
 #endif // HIDRAW_TOUCH_PLUGIN_H
