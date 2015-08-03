@@ -24,6 +24,7 @@ HidRawHandler::HidRawHandler(const QString &spec) :
     m_file (nullptr)
 
 {
+    Q_UNUSED (spec)
     QObject::connect(m_udev, &UdevHelper::deviceDetected, this, &HidRawHandler::onDeviceDetected);
     QObject::connect(m_udev, &UdevHelper::deviceRemoved, this, &HidRawHandler::onDeviceRemoved);
 
@@ -43,6 +44,7 @@ void HidRawHandler::onDeviceDetected(const QString &node, const QString &vid, co
 
 void HidRawHandler::onDeviceRemoved(const QString &node)
 {
+    Q_UNUSED (node)
     // FIXME: it's not possible un-register/delete QTouchDevice
     delete m_file;
     m_file = nullptr;
@@ -52,9 +54,11 @@ void HidRawHandler::addDevice(const QString &node)
 {
     if (!m_device) {
         m_device = new QTouchDevice;
+        m_device->setName(QStringLiteral("HIDRAW"));
         m_device->setType(QTouchDevice::TouchScreen);
         m_device->setCapabilities(QTouchDevice::Position | QTouchDevice::Area |
-                                         QTouchDevice::Pressure | QTouchDevice::NormalizedPosition);
+                                  QTouchDevice::Pressure | QTouchDevice::NormalizedPosition);
+        m_device->setMaximumTouchPoints(4);
         QWindowSystemInterface::registerTouchDevice(m_device);
     }
 
@@ -64,30 +68,37 @@ void HidRawHandler::addDevice(const QString &node)
     }
 
     m_file = new QFile(node);
-    m_file->open(QIODevice::ReadOnly | QIODevice::Unbuffered);
+    if (!m_file->open(QIODevice::ReadOnly | QIODevice::Unbuffered)) {
+        qWarning("Failed to open %s", qPrintable(node));
+        return;
+    }
     QSocketNotifier *notify = new QSocketNotifier(m_file->handle(), QSocketNotifier::Read, m_file);
     QObject::connect(notify, &QSocketNotifier::activated, this, &HidRawHandler::onSocketActivated);
 }
 
 void HidRawHandler::onSocketActivated(int socket)
 {
+    Q_UNUSED (socket)
     static QByteArray data (25, Qt::Uninitialized);
     int read = m_file->read(data.data(), 25);
     Q_ASSERT (read == 25);
 
+    struct Packet {
+        quint8 id;
+        quint8 flags;
+        quint16 pos[2];
+    };
+    const Packet *packets = reinterpret_cast<const Packet *>(data.constData());
     static QList<QWindowSystemInterface::TouchPoint> tpoints {{},{},{},{}};
+
     for (int i = 0; i < 4; ++i) {
-        struct Packet {
-            qint8 f1;
-            qint8 f2;
-            quint16 pos[2];
-        };
-        Packet *raw_point = reinterpret_cast<Packet*>(data.data() + i * sizeof(Packet));
-        qreal x = qFromBigEndian(raw_point->pos[0]);
-        qreal y = qFromBigEndian(raw_point->pos[1]);
+        const Packet &raw_point = packets[i];
+        qreal x = qFromBigEndian(raw_point.pos[0]);
+        qreal y = qFromBigEndian(raw_point.pos[1]);
+        if (i % 2) qSwap(x, y);
         QWindowSystemInterface::TouchPoint &point = tpoints[i];
         point.id = i;
-        if (raw_point->f1) {
+        if (packets[1].flags & (1 << i)) {
             point.area = QRectF(x, y, 0, 0);
             point.pressure = 1.0;
             point.state = Qt::TouchPointPressed;
@@ -97,6 +108,7 @@ void HidRawHandler::onSocketActivated(int socket)
             point.state = Qt::TouchPointReleased;
         }
     }
+
     QWindow *window = QGuiApplication::focusWindow();
     QWindowSystemInterface::handleTouchEvent(window, m_device, tpoints);
 }
