@@ -80,8 +80,10 @@ void HidRawHandler::onSocketActivated(int socket)
 {
     Q_UNUSED (socket)
     static QByteArray data (25, Qt::Uninitialized);
-    int read = m_file->read(data.data(), 25);
-    Q_ASSERT (read == 25);
+    if (25 > m_file->read(data.data(), 25)) {
+        qWarning("Read less than 25bytes from the %s. Ignoring.", qPrintable(m_file->fileName()));
+        return;
+    }
 
     struct Packet {
         quint8 id;

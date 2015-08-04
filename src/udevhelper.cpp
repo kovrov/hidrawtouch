@@ -20,8 +20,10 @@ UdevHelper::UdevHelper(QObject *parent) :
 UdevHelper::~UdevHelper()
 {
     QObject::disconnect(m_socket);
-    m_monitor = udev_monitor_unref(m_monitor);
-    m_udev = udev_unref(m_udev);
+    udev_monitor_unref(m_monitor);
+    m_monitor = nullptr;
+    udev_unref(m_udev);
+    m_udev = nullptr;
 }
 
 void UdevHelper::onSocketActivated(int socket_fd)
