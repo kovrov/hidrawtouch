@@ -6,6 +6,74 @@
 #include "udevhelper.h"
 #include "hidrawtouchplugin.h"
 
+namespace {
+
+void handleTouchEvent(const QByteArray &data, QTouchDevice *device)
+{
+    struct Packet {
+        quint8 id;
+        quint8 flags;
+        quint16 pos[2];
+    };
+    const Packet *packets = reinterpret_cast<const Packet *>(data.constData());
+    QList<QWindowSystemInterface::TouchPoint> tpoints {{},{},{},{}};
+
+    for (int i = 0; i < 4; ++i) {
+        const Packet &raw_point = packets[i];
+        qreal x = qFromBigEndian(raw_point.pos[0]);
+        qreal y = qFromBigEndian(raw_point.pos[1]);
+        if (i % 2) qSwap(x, y);
+        QWindowSystemInterface::TouchPoint &point = tpoints[i];
+        point.id = i;
+        if (packets[1].flags & (1 << i)) {
+            point.area = QRectF(x, y, 0, 0);
+            point.pressure = 1.0;
+            point.state = Qt::TouchPointPressed;
+            point.normalPosition = QPointF(x / 800.0, y / 480.0);
+        } else {
+            point.pressure = 0.0;
+            point.state = Qt::TouchPointReleased;
+        }
+    }
+
+    QWindow *window = QGuiApplication::focusWindow();
+    QWindowSystemInterface::handleTouchEvent(window, device, tpoints);
+}
+
+void handleMouseEvent(const QByteArray &data)
+{
+    struct Packet {
+        quint8 id;
+        quint8 flags;
+        quint16 pos[2];
+    };
+    const Packet *packets = reinterpret_cast<const Packet *>(data.constData());
+
+    const Packet &raw_point = packets[0];
+
+    Qt::MouseButtons b = (packets[0].flags & 1) ? Qt::LeftButton : Qt::NoButton;
+    QPointF pos (qFromBigEndian(raw_point.pos[0]), qFromBigEndian(raw_point.pos[1]));
+
+    static struct {QPointF pos;  Qt::MouseButtons b = Qt::NoButton; int count = 0; } _last;
+
+    if (b) {
+        _last.count = 0;
+    } else {
+        ++_last.count;
+        if (_last.count < 3) // ignoring first 3 releases
+            return;
+        pos = _last.pos;
+    }
+
+    QWindow *window = QGuiApplication::focusWindow();
+    QWindowSystemInterface::handleMouseEvent(window, pos, pos, b);
+
+    _last.b = b;
+    _last.pos = pos;
+}
+
+} // namespace
+
 HidRawTouchPlugin::HidRawTouchPlugin(QObject *parent) :
     QGenericPlugin (parent)
 {
@@ -85,32 +153,6 @@ void HidRawHandler::onSocketActivated(int socket)
         return;
     }
 
-    struct Packet {
-        quint8 id;
-        quint8 flags;
-        quint16 pos[2];
-    };
-    const Packet *packets = reinterpret_cast<const Packet *>(data.constData());
-    static QList<QWindowSystemInterface::TouchPoint> tpoints {{},{},{},{}};
-
-    for (int i = 0; i < 4; ++i) {
-        const Packet &raw_point = packets[i];
-        qreal x = qFromBigEndian(raw_point.pos[0]);
-        qreal y = qFromBigEndian(raw_point.pos[1]);
-        if (i % 2) qSwap(x, y);
-        QWindowSystemInterface::TouchPoint &point = tpoints[i];
-        point.id = i;
-        if (packets[1].flags & (1 << i)) {
-            point.area = QRectF(x, y, 0, 0);
-            point.pressure = 1.0;
-            point.state = Qt::TouchPointPressed;
-            point.normalPosition = QPointF(x / 800.0, y / 480.0);
-        } else {
-            point.pressure = 0.0;
-            point.state = Qt::TouchPointReleased;
-        }
-    }
-
-    QWindow *window = QGuiApplication::focusWindow();
-    QWindowSystemInterface::handleTouchEvent(window, m_device, tpoints);
+    //handleTouchEvent(data, m_device);
+    handleMouseEvent(data);
 }
